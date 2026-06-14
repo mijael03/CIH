@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
+import 'package:cih/src/adapter/dart/dart_dependencies.dart';
 import 'package:cih/src/adapter/dart/dart_references.dart';
 import 'package:cih/src/store/symbol_store.dart';
 import 'package:mcp_dart/mcp_dart.dart';
@@ -129,6 +130,76 @@ Future<void> main() async {
         'query': name,
         'targetCount': result.targets.length,
         'targets': [for (final t in result.targets) _callersJson(t)],
+      };
+      return CallToolResult.fromContent(
+        [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],
+      );
+    },
+  );
+
+  server.registerTool(
+    'module_dependencies',
+    description:
+        'Dependencias de un módulo (N4): de qué otros módulos depende y cuáles '
+        'lo usan, según los imports internos del proyecto.',
+    inputSchema: JsonSchema.object(
+      properties: {
+        'module': JsonSchema.string(
+            description: 'Nombre del módulo (p. ej. "commercial" o '
+                '"modules/commercial").'),
+      },
+      required: ['module'],
+    ),
+    callback: (args, extra) async {
+      final raw = args['module'] as String;
+      final graph = DartDependencies.forProject(projectPath).analyze();
+      final modules = <String>{for (final n in graph.nodes.values) n.module};
+      final module = modules.contains(raw)
+          ? raw
+          : (modules.contains('modules/$raw') ? 'modules/$raw' : raw);
+      final payload = {
+        'module': module,
+        'found': modules.contains(module),
+        'dependsOn': graph.moduleDeps(module).toList()..sort(),
+        'usedBy': graph.moduleDependents(module).toList()..sort(),
+        if (!modules.contains(module))
+          'availableModules': modules.toList()..sort(),
+      };
+      return CallToolResult.fromContent(
+        [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],
+      );
+    },
+  );
+
+  server.registerTool(
+    'layer_violations',
+    description:
+        'Posibles violaciones de capa de Clean Architecture (N4). INFORMATIVO: '
+        'muchas pueden ser intencionales o convención del proyecto; NO es un '
+        'error y no bloquea nada. Devuelve resumen por tipo con ejemplos.',
+    inputSchema: JsonSchema.object(properties: {}),
+    callback: (args, extra) async {
+      final graph = DartDependencies.forProject(projectPath).analyze();
+      final byKind = <String, List<LayerViolation>>{};
+      for (final x in graph.violations) {
+        (byKind['${x.fromLayer.name} -> ${x.toLayer.name}'] ??= []).add(x);
+      }
+      final kinds = byKind.keys.toList()..sort();
+      final payload = {
+        'total': graph.violations.length,
+        'note': 'Informativo: pueden ser decisiones conscientes o convención '
+            'del proyecto; no es un error bloqueante.',
+        'byKind': [
+          for (final k in kinds)
+            {
+              'kind': k,
+              'count': byKind[k]!.length,
+              'examples': [
+                for (final x in byKind[k]!.take(8))
+                  '${x.fromPath}:${x.line} -> ${x.toPath}',
+              ],
+            },
+        ],
       };
       return CallToolResult.fromContent(
         [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],

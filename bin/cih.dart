@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:cih/src/adapter/dart/dart_adapter.dart';
+import 'package:cih/src/adapter/dart/dart_dependencies.dart';
 import 'package:cih/src/adapter/dart/dart_references.dart';
 import 'package:cih/src/model/intermediate_model.dart';
 import 'package:cih/src/store/symbol_store.dart';
@@ -24,6 +25,10 @@ Future<void> main(List<String> args) async {
       await _refs(rest);
     case 'callers':
       await _callers(rest);
+    case 'deps':
+      _deps(rest);
+    case 'layers':
+      _layers(rest);
     case 'stats':
       _stats();
     default:
@@ -42,6 +47,8 @@ Uso:
   cih find  <nombre>          Busca un símbolo por nombre
   cih refs    <nombre>        Encuentra referencias a un símbolo (semántico)
   cih callers <nombre>        Quién llama a un símbolo (call graph, N3)
+  cih deps    [módulo]        Dependencias entre módulos (N4)
+  cih layers                  Posibles violaciones de capa (informativo, N4)
   cih stats                   Estadísticas del índice actual
 ''');
 }
@@ -227,6 +234,86 @@ Future<void> _callers(List<String> args) async {
           .join(', ');
       stdout.writeln('    $c  ←  $sites');
     }
+    stdout.writeln();
+  }
+}
+
+String? _projectPathOrExit() {
+  if (!File(_dbPath).existsSync()) {
+    stderr.writeln('No hay índice. Corre primero:  cih index <ruta>');
+    exitCode = 69;
+    return null;
+  }
+  final store = SymbolStore.open(_dbPath);
+  final pp = store.getMeta('project_path');
+  store.close();
+  if (pp == null) {
+    stderr.writeln('El índice no registró la ruta del proyecto. Re-indexa.');
+    exitCode = 69;
+    return null;
+  }
+  return pp;
+}
+
+void _deps(List<String> args) {
+  final projectPath = _projectPathOrExit();
+  if (projectPath == null) return;
+  final graph = DartDependencies.forProject(projectPath).analyze();
+  final modules = <String>{for (final n in graph.nodes.values) n.module};
+
+  if (args.isEmpty) {
+    final mods = modules.toList()..sort();
+    stdout.writeln('Módulos (${mods.length}). Uso: cih deps <módulo>\n');
+    for (final m in mods) {
+      stdout.writeln('  $m');
+    }
+    return;
+  }
+
+  var module = args.first;
+  if (!modules.contains(module) && modules.contains('modules/$module')) {
+    module = 'modules/$module';
+  }
+  if (!modules.contains(module)) {
+    stderr.writeln('Módulo no encontrado: $module (usa `cih deps` para listar)');
+    exitCode = 69;
+    return;
+  }
+  final deps = graph.moduleDeps(module).toList()..sort();
+  final dependents = graph.moduleDependents(module).toList()..sort();
+  stdout.writeln('Módulo: $module\n');
+  stdout.writeln('Depende de (${deps.length}):');
+  for (final d in deps) {
+    stdout.writeln('  → $d');
+  }
+  stdout.writeln('\nLo usan (${dependents.length}):');
+  for (final d in dependents) {
+    stdout.writeln('  ← $d');
+  }
+}
+
+void _layers(List<String> args) {
+  final projectPath = _projectPathOrExit();
+  if (projectPath == null) return;
+  final graph = DartDependencies.forProject(projectPath).analyze();
+  final v = graph.violations;
+
+  stdout.writeln('Posibles violaciones de capa (Clean Architecture): ${v.length}');
+  stdout.writeln('NOTA: informativo — pueden ser decisiones conscientes; '
+      'no bloquean nada.\n');
+
+  final byKind = <String, List<LayerViolation>>{};
+  for (final x in v) {
+    (byKind['${x.fromLayer.name} → ${x.toLayer.name}'] ??= []).add(x);
+  }
+  final kinds = byKind.keys.toList()..sort();
+  for (final k in kinds) {
+    final list = byKind[k]!;
+    stdout.writeln('▸ $k  (${list.length})');
+    for (final x in list.take(12)) {
+      stdout.writeln('    ${x.fromPath}:${x.line}  →  ${x.toPath}');
+    }
+    if (list.length > 12) stdout.writeln('    … y ${list.length - 12} más');
     stdout.writeln();
   }
 }
