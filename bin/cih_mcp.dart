@@ -109,7 +109,52 @@ Future<void> main() async {
     },
   );
 
+  server.registerTool(
+    'find_callers',
+    description:
+        'Call graph: quién LLAMA a un símbolo. Devuelve los métodos/funciones '
+        'que lo referencian, agrupados por llamador con archivo:línea '
+        '(resolución semántica; separa homónimos por receptor).',
+    inputSchema: JsonSchema.object(
+      properties: {
+        'name': JsonSchema.string(description: 'Nombre del símbolo.'),
+      },
+      required: ['name'],
+    ),
+    callback: (args, extra) async {
+      final name = args['name'] as String;
+      final result =
+          await DartReferences(projectPath).find(name, collection: hot());
+      final payload = {
+        'query': name,
+        'targetCount': result.targets.length,
+        'targets': [for (final t in result.targets) _callersJson(t)],
+      };
+      return CallToolResult.fromContent(
+        [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],
+      );
+    },
+  );
+
   server.connect(StdioServerTransport());
+}
+
+Map<String, dynamic> _callersJson(ReferenceTarget t) {
+  final byCaller = <String, List<String>>{};
+  for (final r in t.references) {
+    (byCaller[r.enclosing ?? '(nivel superior)'] ??= [])
+        .add('${r.filePath}:${r.line}');
+  }
+  final callers = byCaller.keys.toList()..sort();
+  return {
+    'symbol': t.qualified,
+    'kind': t.kind,
+    'definition': '${t.file}:${t.line}',
+    'callerCount': callers.length,
+    'callers': [
+      for (final c in callers) {'caller': c, 'sites': byCaller[c]},
+    ],
+  };
 }
 
 Map<String, dynamic> _targetToJson(ReferenceTarget t) {

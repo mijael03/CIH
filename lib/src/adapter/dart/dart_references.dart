@@ -214,11 +214,11 @@ class _RefCollector extends RecursiveAstVisitor<void> {
   final String filePath;
   final LineInfo lineInfo;
 
-  void _hit(Element? element, int offset) {
+  void _hit(Element? element, AstNode node) {
     if (element == null) return;
     final t = targets[element.baseElement];
     if (t == null) return;
-    final loc = lineInfo.getLocation(offset);
+    final loc = lineInfo.getLocation(node.offset);
     final key = '$filePath:${loc.lineNumber}:${loc.columnNumber}';
     if (t._seen.add(key)) {
       t.references.add(Occurrence(
@@ -227,19 +227,57 @@ class _RefCollector extends RecursiveAstVisitor<void> {
         line: loc.lineNumber,
         column: loc.columnNumber,
         role: OccurrenceRole.reference,
+        enclosing: _enclosingSymbol(node),
       ));
     }
   }
 
   @override
   void visitNamedType(NamedType node) {
-    _hit(node.element, node.offset);
+    _hit(node.element, node);
     super.visitNamedType(node);
   }
 
   @override
   void visitSimpleIdentifier(SimpleIdentifier node) {
-    _hit(node.element, node.offset);
+    _hit(node.element, node);
     super.visitSimpleIdentifier(node);
   }
+}
+
+/// Nombre cualificado del símbolo (método/función/constructor/campo) que
+/// CONTIENE el nodo dado — es decir, "quién" hace la referencia. Base de N3.
+String? _enclosingSymbol(AstNode node) {
+  for (AstNode? n = node; n != null; n = n.parent) {
+    if (n is MethodDeclaration) {
+      final o = _ownerName(n);
+      return o == null ? n.name.lexeme : '$o.${n.name.lexeme}';
+    }
+    if (n is FunctionDeclaration && n.parent is CompilationUnit) {
+      return n.name.lexeme;
+    }
+    if (n is ConstructorDeclaration) {
+      final o = _ownerName(n) ?? '';
+      final cn = n.name?.lexeme;
+      return cn == null ? o : '$o.$cn';
+    }
+    if (n is FieldDeclaration) {
+      final o = _ownerName(n);
+      final vs = n.fields.variables;
+      final v = vs.isEmpty ? '' : vs.first.name.lexeme;
+      return o == null ? v : '$o.$v';
+    }
+  }
+  return null;
+}
+
+/// Nombre del tipo contenedor (clase/mixin/enum/extension) del nodo.
+String? _ownerName(AstNode node) {
+  for (AstNode? n = node.parent; n != null; n = n.parent) {
+    if (n is ClassDeclaration) return n.namePart.typeName.lexeme;
+    if (n is MixinDeclaration) return n.name.lexeme;
+    if (n is EnumDeclaration) return n.namePart.typeName.lexeme;
+    if (n is ExtensionDeclaration) return n.name?.lexeme ?? '<extension>';
+  }
+  return null;
 }

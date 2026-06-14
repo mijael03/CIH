@@ -1,27 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
 
-/// Re-evalúa el acierto de corridas YA guardadas (.jsonl) con un criterio
-/// NORMALIZADO: ignora mayúsculas y todo lo no alfanumérico, de modo que el
-/// nombre de archivo (`role_view_dialog.dart`) y el de clase (`RoleViewDialog`)
-/// cuenten como el mismo acierto. NO ejecuta claude — solo procesa texto.
+/// Reporta el benchmark E2E desde los .jsonl: métricas DURAS y objetivas
+/// (tokens, turnos, tiempo, costo). El ACIERTO se juzga a mano: con `--answers`
+/// imprime las respuestas del agente por pregunta/condición para revisarlas.
+/// NO ejecuta claude.
 ///
-///   dart run tool/bench_eval.dart [archivo.jsonl ...]
-///   (sin args: usa todos los bench/results/run-*.jsonl)
-
-String _norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+///   dart run tool/bench_eval.dart [--answers] [archivo.jsonl ...]
+///   (sin .jsonl: usa todos los bench/results/run-*.jsonl)
 
 void main(List<String> argv) {
   final root = Directory.current.path;
-  final expectsById = <String, List<String>>{
-    for (final e in json.decode(
-            File('$root/bench/questions.json').readAsStringSync()) as List)
-      (e as Map)['id'] as String:
-          ((e['expect_contains'] as List?) ?? const []).cast<String>(),
-  };
-
-  final files = argv.isNotEmpty
-      ? argv
+  final showAnswers = argv.contains('--answers');
+  final explicit = argv.where((a) => a.endsWith('.jsonl')).toList();
+  final files = explicit.isNotEmpty
+      ? explicit
       : (Directory('$root/bench/results')
           .listSync()
           .whereType<File>()
@@ -38,51 +31,62 @@ void main(List<String> argv) {
   for (final f in files) {
     for (final line in File(f).readAsLinesSync()) {
       if (line.trim().isEmpty) continue;
-      final r = json.decode(line) as Map<String, dynamic>;
-      final expects = expectsById[r['questionId']] ?? const <String>[];
-      final result = _norm((r['result'] ?? '').toString());
-      r['correctEval'] = expects.isNotEmpty &&
-          expects.every((e) => result.contains(_norm(e)));
-      rows.add(r);
+      rows.add(json.decode(line) as Map<String, dynamic>);
     }
   }
 
-  // Tabla por pregunta (baseline vs cih), con tokens/turnos/acierto.
   final ids = <String>[];
   for (final r in rows) {
     if (!ids.contains(r['questionId'])) ids.add(r['questionId'] as String);
   }
-  stdout.writeln('# Re-evaluación normalizada (sin re-correr)\n');
-  stdout.writeln('| Pregunta | cond | n | acierto | tokens | turnos | costo |');
+
+  // Métricas duras por pregunta/condición (el acierto NO se infiere aquí).
+  stdout.writeln('# Benchmark E2E — métricas duras (el acierto se juzga a mano)\n');
+  stdout.writeln('| Pregunta | cond | n | tokens | turnos | tiempo | costo |');
   stdout.writeln('|---|---|---|---|---|---|---|');
   for (final id in ids) {
     for (final c in const ['baseline', 'cih']) {
-      final l = rows
-          .where((m) =>
-              m['questionId'] == id && m['condition'] == c && m['ok'] == true)
-          .toList();
+      final l = _sel(rows, id, c);
       if (l.isEmpty) continue;
-      stdout.writeln('| $id | $c | ${l.length} | ${_acc(l).toStringAsFixed(0)}% '
+      stdout.writeln('| $id | $c | ${l.length} '
           '| ${_avg(l, 'totalTokens').round()} '
           '| ${_avg(l, 'numTurns').toStringAsFixed(1)} '
+          '| ${(_avg(l, 'durationMs') / 1000).toStringAsFixed(1)}s '
           '| \$${_avg(l, 'costUsd').toStringAsFixed(4)} |');
     }
   }
 
-  // Consolidado.
   stdout.writeln('\n## Consolidado (${rows.length} corridas)\n');
   for (final c in const ['baseline', 'cih']) {
     final l = rows.where((m) => m['condition'] == c && m['ok'] == true).toList();
     if (l.isEmpty) continue;
-    stdout.writeln('- **$c** — acierto ${_acc(l).toStringAsFixed(0)}% · '
-        '${_avg(l, 'totalTokens').round()} tokens · '
+    stdout.writeln('- **$c** — ${_avg(l, 'totalTokens').round()} tokens · '
         '${_avg(l, 'numTurns').toStringAsFixed(1)} turnos · '
         '\$${_avg(l, 'costUsd').toStringAsFixed(4)}/corrida');
   }
+
+  if (showAnswers) {
+    stdout.writeln('\n## Respuestas (1 rep por condición) — juzga tú el acierto\n');
+    for (final id in ids) {
+      stdout.writeln('### $id');
+      for (final c in const ['baseline', 'cih']) {
+        final l = _sel(rows, id, c);
+        if (l.isEmpty) continue;
+        stdout.writeln('**$c:** ${(l.first['result'] ?? '').toString().trim()}\n');
+      }
+    }
+  } else {
+    stdout.writeln('\n(Usa `--answers` para imprimir las respuestas y juzgar el '
+        'acierto a mano.)');
+  }
 }
+
+List<Map<String, dynamic>> _sel(
+        List<Map<String, dynamic>> rows, String id, String cond) =>
+    rows
+        .where((m) =>
+            m['questionId'] == id && m['condition'] == cond && m['ok'] == true)
+        .toList();
 
 double _avg(List<Map<String, dynamic>> l, String k) =>
     l.isEmpty ? 0 : l.map((m) => (m[k] as num)).reduce((a, b) => a + b) / l.length;
-
-double _acc(List<Map<String, dynamic>> l) =>
-    l.isEmpty ? 0 : l.where((m) => m['correctEval'] == true).length / l.length * 100;

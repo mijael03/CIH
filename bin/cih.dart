@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cih/src/adapter/dart/dart_adapter.dart';
 import 'package:cih/src/adapter/dart/dart_references.dart';
+import 'package:cih/src/model/intermediate_model.dart';
 import 'package:cih/src/store/symbol_store.dart';
 
 const _dbDir = '.cih';
@@ -21,6 +22,8 @@ Future<void> main(List<String> args) async {
       _find(rest);
     case 'refs':
       await _refs(rest);
+    case 'callers':
+      await _callers(rest);
     case 'stats':
       _stats();
     default:
@@ -37,7 +40,8 @@ cih — Code Intelligence Harness
 Uso:
   cih index <ruta_proyecto>   Indexa un proyecto Dart/Flutter
   cih find  <nombre>          Busca un símbolo por nombre
-  cih refs  <nombre>          Encuentra referencias a un símbolo (semántico)
+  cih refs    <nombre>        Encuentra referencias a un símbolo (semántico)
+  cih callers <nombre>        Quién llama a un símbolo (call graph, N3)
   cih stats                   Estadísticas del índice actual
 ''');
 }
@@ -168,6 +172,60 @@ Future<void> _refs(List<String> args) async {
     for (final f in files) {
       final lines = (byFile[f]!..sort()).join(', ');
       stdout.writeln('    $f  →  $lines');
+    }
+    stdout.writeln();
+  }
+}
+
+Future<void> _callers(List<String> args) async {
+  if (args.isEmpty) {
+    stderr.writeln('Falta <nombre>');
+    exitCode = 64;
+    return;
+  }
+  if (!File(_dbPath).existsSync()) {
+    stderr.writeln('No hay índice. Corre primero:  cih index <ruta>');
+    exitCode = 69;
+    return;
+  }
+  final query = args.first;
+  final store = SymbolStore.open(_dbPath);
+  final projectPath = store.getMeta('project_path');
+  store.close();
+  if (projectPath == null) {
+    stderr.writeln('El índice no registró la ruta del proyecto. Re-indexa.');
+    exitCode = 69;
+    return;
+  }
+
+  stdout.writeln('¿Quién llama a "$query"? ...');
+  final result = await DartReferences(projectPath).find(
+    query,
+    onProgress: (done, total) {
+      if (done % 20 == 0 || done == total) {
+        stdout.write('\r  resolviendo $done/$total candidatos ');
+      }
+    },
+  );
+  stdout.writeln();
+  if (!result.found) {
+    stdout.writeln('No se encontró la definición de "$query".');
+    return;
+  }
+
+  for (final t in result.targets) {
+    final byCaller = <String, List<Occurrence>>{};
+    for (final r in t.references) {
+      (byCaller[r.enclosing ?? '(nivel superior)'] ??= []).add(r);
+    }
+    stdout.writeln('▸ ${t.qualified}  [${t.kind}]  ·  '
+        '${byCaller.length} llamador(es)');
+    final callers = byCaller.keys.toList()..sort();
+    for (final c in callers) {
+      final sites = (byCaller[c]!..sort((a, b) => a.line.compareTo(b.line)))
+          .map((o) => '${o.filePath}:${o.line}')
+          .join(', ');
+      stdout.writeln('    $c  ←  $sites');
     }
     stdout.writeln();
   }

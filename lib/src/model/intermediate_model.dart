@@ -87,12 +87,17 @@ class Occurrence {
   final int column;
   final OccurrenceRole role;
 
+  /// Símbolo (método/función/campo) que CONTIENE esta ocurrencia, es decir
+  /// "quién" hace la referencia. Base del call graph (N3). Null si no aplica.
+  final String? enclosing;
+
   const Occurrence({
     required this.symbolId,
     required this.filePath,
     required this.line,
     required this.column,
     required this.role,
+    this.enclosing,
   });
 }
 
