@@ -6,6 +6,7 @@
 library;
 
 export 'src/adapter/dart/dart_adapter.dart';
+export 'src/adapter/dart/dart_references.dart';
 export 'src/adapter/language_adapter.dart';
 export 'src/model/intermediate_model.dart';
 export 'src/store/symbol_store.dart';

@@ -20,6 +20,10 @@ class SymbolStore {
   void _migrate() {
     db.execute('PRAGMA journal_mode = WAL;');
     db.execute('''
+      CREATE TABLE IF NOT EXISTS meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      );
       CREATE TABLE IF NOT EXISTS files (
         path     TEXT PRIMARY KEY,
         language TEXT NOT NULL,
@@ -81,6 +85,20 @@ class SymbolStore {
         db.select('SELECT kind, COUNT(*) AS c FROM symbols GROUP BY kind '
             'ORDER BY c DESC');
     return {for (final r in rows) r['kind'] as String: r['c'] as int};
+  }
+
+  /// Guarda un valor de metadatos (p. ej. la ruta del proyecto indexado).
+  void setMeta(String key, String value) {
+    db.execute(
+      'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)',
+      [key, value],
+    );
+  }
+
+  /// Lee un valor de metadatos, o null si no existe.
+  String? getMeta(String key) {
+    final rows = db.select('SELECT value FROM meta WHERE key = ?', [key]);
+    return rows.isEmpty ? null : rows.first['value'] as String?;
   }
 
   /// Busca símbolos por nombre: exacto primero, luego prefijo, luego substring.
