@@ -5,7 +5,7 @@
 
 <p>
   <img alt="Dart" src="https://img.shields.io/badge/Dart-3.12-0175C2?logo=dart&logoColor=white">
-  <img alt="estado" src="https://img.shields.io/badge/estado-en%20desarrollo-yellow">
+  <img alt="niveles" src="https://img.shields.io/badge/niveles-N1–N5-brightgreen">
   <img alt="licencia" src="https://img.shields.io/badge/licencia-TBD-lightgrey">
 </p>
 
@@ -13,20 +13,20 @@
 
 ## ¿Qué es?
 
-CIH es una capa que se sitúa entre un agente de programación (Claude Code, Codex, Cursor…) y tu repositorio. En vez de que el agente haga `grep` → leer archivo → repetir, le entrega **respuestas estructuradas y mínimas**: dónde se define un símbolo, dónde se usa, quién lo llama, de qué depende y qué ocurre en un flujo de negocio completo.
+CIH es una capa que se sitúa entre un agente de programación (Claude Code, Codex, Cursor…) y tu repositorio. En vez de que el agente haga `grep` → leer archivo → repetir, le entrega **respuestas estructuradas y mínimas** por resolución semántica (vía el `analyzer` de Dart, el mismo motor del IDE): definiciones, usos reales, quién llama a qué, dependencias y el flujo completo de una acción de negocio.
 
-El resultado: **menos tokens, menos iteraciones y respuestas más precisas.**
+Se integra vía **MCP**, así cualquier agente compatible lo consulta como una herramienta más.
 
 ## Capacidades
 
-- 🔎 **Símbolos** — definiciones, firmas y ubicación exacta, sin volcar el archivo.
-- 🔗 **Referencias** — dónde se usa algo, agrupado y contado.
-- 🧬 **Herencia** — implementaciones y subclases.
-- 📞 **Llamadas** — quién llama a qué.
-- 🧱 **Dependencias** — entre módulos y capas.
-- 🌊 **Flujos** — el recorrido completo de una acción de negocio.
-
-Se integra vía **MCP**, así cualquier agente compatible lo consulta como una herramienta más.
+| Nivel | Tool MCP | Qué responde |
+|---|---|---|
+| N1 Símbolos | `find_symbol` | Dónde se define algo: tipo, firma y `file:line`, sin el cuerpo. |
+| N2 Referencias | `find_references` | Dónde se usa, por resolución semántica (cero falsos positivos; separa homónimos por receptor). |
+| N3 Call graph | `find_callers` / `find_callees` | Quién llama a X, y a quién llama X (con el método contenedor). |
+| N4 Dependencias | `module_dependencies` | De qué módulos depende uno y cuáles lo usan. |
+| N4 Capas | `layer_violations` | Cruces de capa de Clean Architecture (**informativo**, no bloquea). |
+| N5 Flujos | `trace_flow` | El árbol de una acción de negocio, podado por capas. |
 
 ## Uso
 
@@ -35,11 +35,13 @@ Se integra vía **MCP**, así cualquier agente compatible lo consulta como una h
 dart run bin/cih.dart index /ruta/al/proyecto
 
 # 2. Consultar desde la CLI
-dart run bin/cih.dart find  LeadController   # ¿dónde se define?
-dart run bin/cih.dart refs  LeadModel        # ¿dónde se usa? (semántico)
-
-# 3. O exponerlo como servidor MCP para tu agente
-dart run bin/cih_mcp.dart
+dart run bin/cih.dart find    LeadController     # dónde se define
+dart run bin/cih.dart refs    LeadModel          # dónde se usa
+dart run bin/cih.dart callers logout             # quién lo llama
+dart run bin/cih.dart callees addPermissions     # a quién llama
+dart run bin/cih.dart deps    commercial         # dependencias del módulo
+dart run bin/cih.dart layers                     # violaciones de capa (info)
+dart run bin/cih.dart flow    post --depth 4     # flujo de negocio
 ```
 
 Para conectarlo a **Claude Code** (disponible en todos tus proyectos):
@@ -48,26 +50,32 @@ Para conectarlo a **Claude Code** (disponible en todos tus proyectos):
 claude mcp add cih -s user -- /ruta/a/CIH/cih-mcp.sh
 ```
 
-El wrapper `cih-mcp.sh` fija el directorio correcto, así el server encuentra el índice sin importar desde dónde lances Claude Code. Verifica con `/mcp` y pídele al agente que use `find_symbol` / `find_references`.
+El wrapper `cih-mcp.sh` fija el directorio del índice, así el server lo encuentra sin importar desde dónde se lance. Verifica con `/mcp`.
 
 ## Estado
 
-🚧 Desarrollo temprano. Lenguaje soportado: **Dart / Flutter**. Multi-lenguaje en el horizonte.
+Niveles **N1–N5** implementados. Lenguaje soportado: **Dart / Flutter**. Multi-lenguaje en el horizonte (core agnóstico + adaptadores por lenguaje).
 
 ## Resultados
 
-Benchmark sobre un CRM Flutter real (~1.500 archivos, 33k símbolos). Mide el **contexto entregado al LLM**: el output crudo de `grep -rn` (lo que un agente debe leer) frente a la respuesta de CIH, para la misma consulta.
+Medido end-to-end sobre un CRM Flutter real (~1.500 archivos, 33k símbolos), corriendo el agente headless con y sin CIH:
 
-| Consulta | Tipo | grep (tokens) | CIH (tokens) | Ahorro |
-|---|---|--:|--:|--:|
-| LeadModel | refs | 30 265 | 4 985 | 6.1× |
-| LeadController | refs | 15 252 | 2 443 | 6.2× |
-| CustomerController | refs | 6 228 | 1 419 | 4.4× |
-| TicketHeaderModel | refs | 7 839 | 1 271 | 6.2× |
-| ProcessInstanceController | def | 7 220 | 500 | 14.4× |
-| LeadDetailController | def | 1 014 | 85 | 11.9× |
-| LeadAdapter | def | 370 | 77 | 4.8× |
-| LeadUseCase | def | 586 | 246 | 2.4× |
-| **Total** | | **68 774** | **11 026** | **6.2×** |
+| Tipo de consulta | Contexto vs grep | Precisión |
+|---|---|---|
+| Definiciones simples | ≈ igual (grep ya es eficiente) | 100% = grep |
+| Referencias de alto volumen | **2–2.4× menos** contexto y turnos | 100% = grep |
+| Call graph / flujos (N3–N5) | grep no puede hacerlo | — |
 
-**6.2× menos contexto** — y es un piso conservador: no cuenta las lecturas de archivo que un agente con grep haría además para descartar los falsos positivos (que CIH, al ser semántico, no tiene). Reproducible con `dart run bin/bench.dart`.
+**Conclusión honesta:** CIH no es un acelerador universal. **Empata a grep en precisión** y **gana fuerte donde hay volumen o ambigüedad** (referencias masivas, homónimos) y donde la búsqueda textual simplemente no llega (call graph, flujos). En lookups triviales, grep es suficiente.
+
+Lo que ningún `grep` da — el flujo de "registrar una exoneración", en una llamada:
+
+```
+ArrearsExonerationUseCase.post            [application]
+ ├─ ArrearsExonerationAdapter.post        [infrastructure] → Adapter.token
+ ├─ ArrearsDTO.fromModel                  [domain]
+ ├─ NaviaToast.show                       [presentation]
+ └─ OnErrorNotifyer.printStatus           [infrastructure]
+```
+
+> El benchmark sintético por-consulta (`dart run bin/bench.dart`) da hasta ~6× menos contexto, pero es un proxy optimista: mide el output de una consulta aislada, no el flujo completo del agente. La tabla de arriba (E2E) es la medida representativa.
