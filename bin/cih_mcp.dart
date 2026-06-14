@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
+import 'package:cih/src/adapter/dart/dart_callees.dart';
 import 'package:cih/src/adapter/dart/dart_dependencies.dart';
 import 'package:cih/src/adapter/dart/dart_references.dart';
 import 'package:cih/src/store/symbol_store.dart';
@@ -197,6 +198,47 @@ Future<void> main() async {
               'examples': [
                 for (final x in byKind[k]!.take(8))
                   '${x.fromPath}:${x.line} -> ${x.toPath}',
+              ],
+            },
+        ],
+      };
+      return CallToolResult.fromContent(
+        [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],
+      );
+    },
+  );
+
+  server.registerTool(
+    'find_callees',
+    description:
+        'Call graph: a qué símbolos DEL PROYECTO llama X (poda Flutter/SDK). '
+        'Resuelve solo el archivo donde X se define, por eso es barato.',
+    inputSchema: JsonSchema.object(
+      properties: {
+        'name': JsonSchema.string(description: 'Nombre del símbolo.'),
+      },
+      required: ['name'],
+    ),
+    callback: (args, extra) async {
+      final name = args['name'] as String;
+      final syms = store.findByName(name, limit: 10);
+      final groups = await DartCallees.forProject(projectPath).find(
+        name,
+        defFilesRel: {for (final s in syms) s.filePath},
+        collection: hot(),
+      );
+      final payload = {
+        'query': name,
+        'targetCount': groups.length,
+        'targets': [
+          for (final g in groups)
+            {
+              'symbol': g.symbol,
+              'definition': '${g.file}:${g.line}',
+              'calleeCount': g.callees.length,
+              'callees': [
+                for (final c in g.callees)
+                  {'symbol': c.symbol, 'at': '${c.file}:${c.callLine}'},
               ],
             },
         ],

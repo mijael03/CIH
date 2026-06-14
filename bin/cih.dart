@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:cih/src/adapter/dart/dart_adapter.dart';
+import 'package:cih/src/adapter/dart/dart_callees.dart';
 import 'package:cih/src/adapter/dart/dart_dependencies.dart';
 import 'package:cih/src/adapter/dart/dart_references.dart';
 import 'package:cih/src/model/intermediate_model.dart';
@@ -25,6 +26,8 @@ Future<void> main(List<String> args) async {
       await _refs(rest);
     case 'callers':
       await _callers(rest);
+    case 'callees':
+      await _callees(rest);
     case 'deps':
       _deps(rest);
     case 'layers':
@@ -47,6 +50,7 @@ Uso:
   cih find  <nombre>          Busca un símbolo por nombre
   cih refs    <nombre>        Encuentra referencias a un símbolo (semántico)
   cih callers <nombre>        Quién llama a un símbolo (call graph, N3)
+  cih callees <nombre>        A quién llama un símbolo (call graph, N3)
   cih deps    [módulo]        Dependencias entre módulos (N4)
   cih layers                  Posibles violaciones de capa (informativo, N4)
   cih stats                   Estadísticas del índice actual
@@ -314,6 +318,40 @@ void _layers(List<String> args) {
       stdout.writeln('    ${x.fromPath}:${x.line}  →  ${x.toPath}');
     }
     if (list.length > 12) stdout.writeln('    … y ${list.length - 12} más');
+    stdout.writeln();
+  }
+}
+
+Future<void> _callees(List<String> args) async {
+  if (args.isEmpty) {
+    stderr.writeln('Falta <nombre>');
+    exitCode = 64;
+    return;
+  }
+  final projectPath = _projectPathOrExit();
+  if (projectPath == null) return;
+  final query = args.first;
+  final store = SymbolStore.open(_dbPath);
+  final syms = store.findByName(query, limit: 10);
+  store.close();
+  if (syms.isEmpty) {
+    stdout.writeln('No se encontró "$query" en el índice.');
+    return;
+  }
+
+  stdout.writeln('¿A quién llama "$query"? (solo símbolos del proyecto)\n');
+  final groups = await DartCallees.forProject(projectPath)
+      .find(query, defFilesRel: {for (final s in syms) s.filePath});
+  if (groups.isEmpty) {
+    stdout.writeln('Sin callees del proyecto.');
+    return;
+  }
+  for (final g in groups) {
+    stdout.writeln('▸ ${g.symbol}  (${g.file}:${g.line})  ·  '
+        '${g.callees.length} callee(s) del proyecto');
+    for (final c in g.callees) {
+      stdout.writeln('    → ${c.symbol}   ${c.file}:${c.callLine}');
+    }
     stdout.writeln();
   }
 }

@@ -6,6 +6,7 @@
 library;
 
 export 'src/adapter/dart/dart_adapter.dart';
+export 'src/adapter/dart/dart_callees.dart';
 export 'src/adapter/dart/dart_dependencies.dart';
 export 'src/adapter/dart/dart_references.dart';
 export 'src/adapter/language_adapter.dart';
