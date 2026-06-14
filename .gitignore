@@ -1,0 +1,12 @@
+# Dart / Pub
+.dart_tool/
+.packages
+build/
+pubspec_overrides.yaml
+
+# Tooling
+*.log
+coverage/
+
+# OS
+.DS_Store
