@@ -4,6 +4,9 @@
 build/
 pubspec_overrides.yaml
 
+# CIH (índice local)
+.cih/
+
 # Tooling
 *.log
 coverage/
