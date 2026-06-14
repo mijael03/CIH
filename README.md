@@ -42,19 +42,13 @@ dart run bin/cih.dart refs  LeadModel        # ¿dónde se usa? (semántico)
 dart run bin/cih_mcp.dart
 ```
 
-Para conectarlo a **Claude Code**, agrega a `.mcp.json` (con `cwd` apuntando a este repo, donde vive el índice):
+Para conectarlo a **Claude Code** (disponible en todos tus proyectos):
 
-```json
-{
-  "mcpServers": {
-    "cih": {
-      "command": "dart",
-      "args": ["run", "bin/cih_mcp.dart"],
-      "cwd": "/ruta/a/CIH"
-    }
-  }
-}
+```bash
+claude mcp add cih -s user -- /ruta/a/CIH/cih-mcp.sh
 ```
+
+El wrapper `cih-mcp.sh` fija el directorio correcto, así el server encuentra el índice sin importar desde dónde lances Claude Code. Verifica con `/mcp` y pídele al agente que use `find_symbol` / `find_references`.
 
 ## Estado
 

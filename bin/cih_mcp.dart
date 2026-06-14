@@ -6,20 +6,26 @@ import 'package:cih/src/adapter/dart/dart_references.dart';
 import 'package:cih/src/store/symbol_store.dart';
 import 'package:mcp_dart/mcp_dart.dart';
 
-const _dbPath = '.cih/index.db';
+const _defaultDb = '.cih/index.db';
 
 /// Servidor MCP del CIH (stdio). Expone el índice a agentes como Claude Code.
 ///
 /// Proceso de larga vida: abre el índice y mantiene un AnalysisContextCollection
 /// "caliente" reusado entre consultas, de modo que el warmup del analyzer se
 /// paga una sola vez y `find_references` responde rápido en llamadas sucesivas.
+///
+/// El índice se ubica con la variable de entorno CIH_DB (ruta al index.db) o,
+/// en su defecto, .cih/index.db relativo al directorio de trabajo.
 Future<void> main() async {
-  if (!File(_dbPath).existsSync()) {
-    stderr.writeln('CIH: no hay índice en $_dbPath. Corre: cih index <ruta>');
+  final dbPath = Platform.environment['CIH_DB'] ?? _defaultDb;
+  if (!File(dbPath).existsSync()) {
+    stderr.writeln('CIH: no hay índice en $dbPath. '
+        'Indexa con `dart run bin/cih.dart index <ruta>` '
+        'o define CIH_DB con la ruta al index.db.');
     exitCode = 69;
     return;
   }
-  final store = SymbolStore.open(_dbPath);
+  final store = SymbolStore.open(dbPath);
   final projectPath = store.getMeta('project_path');
   if (projectPath == null) {
     stderr.writeln('CIH: el índice no registró project_path. Re-indexa.');
