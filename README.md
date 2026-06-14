@@ -62,4 +62,18 @@ Para conectarlo a **Claude Code**, agrega a `.mcp.json` (con `cwd` apuntando a e
 
 ## Resultados
 
-_Próximamente: métricas de reducción de tokens e iteraciones frente a la búsqueda tradicional._
+Benchmark sobre un CRM Flutter real (~1.500 archivos, 33k símbolos). Mide el **contexto entregado al LLM**: el output crudo de `grep -rn` (lo que un agente debe leer) frente a la respuesta de CIH, para la misma consulta.
+
+| Consulta | Tipo | grep (tokens) | CIH (tokens) | Ahorro |
+|---|---|--:|--:|--:|
+| LeadModel | refs | 30 265 | 4 985 | 6.1× |
+| LeadController | refs | 15 252 | 2 443 | 6.2× |
+| CustomerController | refs | 6 228 | 1 419 | 4.4× |
+| TicketHeaderModel | refs | 7 839 | 1 271 | 6.2× |
+| ProcessInstanceController | def | 7 220 | 500 | 14.4× |
+| LeadDetailController | def | 1 014 | 85 | 11.9× |
+| LeadAdapter | def | 370 | 77 | 4.8× |
+| LeadUseCase | def | 586 | 246 | 2.4× |
+| **Total** | | **68 774** | **11 026** | **6.2×** |
+
+**6.2× menos contexto** — y es un piso conservador: no cuenta las lecturas de archivo que un agente con grep haría además para descartar los falsos positivos (que CIH, al ser semántico, no tiene). Reproducible con `dart run bin/bench.dart`.
