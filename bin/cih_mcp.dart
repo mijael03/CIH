@@ -249,8 +249,55 @@ Future<void> main() async {
     },
   );
 
+  server.registerTool(
+    'trace_flow',
+    description:
+        'Flujo de negocio (N5): árbol de llamadas desde un símbolo de entrada '
+        'hacia abajo, podado a símbolos del PROYECTO (descarta Flutter/SDK). '
+        'Muestra el recorrido por capas — qué pasa cuando se dispara una acción.',
+    inputSchema: JsonSchema.object(
+      properties: {
+        'entry': JsonSchema.string(
+            description: 'Símbolo de entrada (método/función).'),
+        'depth': JsonSchema.number(description: 'Profundidad máxima (def. 5).'),
+      },
+      required: ['entry'],
+    ),
+    callback: (args, extra) async {
+      final entry = args['entry'] as String;
+      final depth = (args['depth'] as num?)?.toInt() ?? 5;
+      final syms = store.findByName(entry, limit: 6);
+      final cal = DartCallees.forProject(projectPath);
+      FlowNode? best;
+      for (final s in syms) {
+        final root = await cal.traceFlow(s.name, s.filePath,
+            maxDepth: depth, collection: hot());
+        if (root.children.isNotEmpty) {
+          best = root;
+          break;
+        }
+        best ??= root;
+      }
+      final payload = best == null
+          ? {'entry': entry, 'found': false}
+          : {'entry': entry, 'flow': _flowJson(best)};
+      return CallToolResult.fromContent(
+        [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],
+      );
+    },
+  );
+
   server.connect(StdioServerTransport());
 }
+
+Map<String, dynamic> _flowJson(FlowNode n) => {
+      'symbol': n.symbol,
+      'at': '${n.file}:${n.line}',
+      if (n.repeated) 'repeated': true,
+      if (n.truncated) 'truncated': true,
+      if (n.children.isNotEmpty)
+        'calls': [for (final c in n.children) _flowJson(c)],
+    };
 
 Map<String, dynamic> _callersJson(ReferenceTarget t) {
   final byCaller = <String, List<String>>{};

@@ -81,6 +81,70 @@ class DartCallees {
     }
     return groups;
   }
+
+  /// Árbol de llamadas (N5 trace_flow) desde [simpleName] (definido en
+  /// [fileRel]) hacia abajo. Podado: solo símbolos del proyecto, sin re-expandir
+  /// repetidos, hasta [maxDepth]. Reutiliza [find] recursivamente.
+  Future<FlowNode> traceFlow(
+    String simpleName,
+    String fileRel, {
+    int maxDepth = 5,
+    String? qualifiedHint,
+    AnalysisContextCollection? collection,
+    Set<String>? visited,
+    int depth = 0,
+  }) async {
+    final acc =
+        collection ?? AnalysisContextCollection(includedPaths: [projectPath]);
+    final seen = visited ?? <String>{};
+    final groups = await find(simpleName, defFilesRel: {fileRel}, collection: acc);
+    final g = groups.isEmpty
+        ? CalleeGroup(qualifiedHint ?? simpleName, fileRel, 0)
+        : (qualifiedHint == null
+            ? groups.first
+            : groups.firstWhere((x) => x.symbol == qualifiedHint,
+                orElse: () => groups.first));
+
+    final node = FlowNode(g.symbol, g.file, g.line);
+    final key = '${g.file}::${g.symbol}';
+    if (seen.contains(key)) {
+      node.repeated = true;
+      return node;
+    }
+    seen.add(key);
+    if (depth >= maxDepth) {
+      node.truncated = g.callees.isNotEmpty;
+      return node;
+    }
+    for (final c in g.callees) {
+      node.children.add(await traceFlow(
+        _simpleName(c.symbol),
+        c.file,
+        maxDepth: maxDepth,
+        qualifiedHint: c.symbol,
+        collection: acc,
+        visited: seen,
+        depth: depth + 1,
+      ));
+    }
+    return node;
+  }
+}
+
+String _simpleName(String qualified) {
+  final i = qualified.lastIndexOf('.');
+  return i < 0 ? qualified : qualified.substring(i + 1);
+}
+
+/// Nodo del árbol de flujo (trace_flow).
+class FlowNode {
+  FlowNode(this.symbol, this.file, this.line);
+  final String symbol;
+  final String file;
+  final int line;
+  final List<FlowNode> children = [];
+  bool repeated = false; // ya expandido en otra rama
+  bool truncated = false; // se cortó por maxDepth
 }
 
 class _Decl {

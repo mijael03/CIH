@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:cih/src/adapter/dart/dart_adapter.dart';
 import 'package:cih/src/adapter/dart/dart_callees.dart';
 import 'package:cih/src/adapter/dart/dart_dependencies.dart';
@@ -28,6 +29,8 @@ Future<void> main(List<String> args) async {
       await _callers(rest);
     case 'callees':
       await _callees(rest);
+    case 'flow':
+      await _flow(rest);
     case 'deps':
       _deps(rest);
     case 'layers':
@@ -51,6 +54,7 @@ Uso:
   cih refs    <nombre>        Encuentra referencias a un símbolo (semántico)
   cih callers <nombre>        Quién llama a un símbolo (call graph, N3)
   cih callees <nombre>        A quién llama un símbolo (call graph, N3)
+  cih flow    <símbolo>       Árbol de llamadas de un flujo (trace_flow, N5)
   cih deps    [módulo]        Dependencias entre módulos (N4)
   cih layers                  Posibles violaciones de capa (informativo, N4)
   cih stats                   Estadísticas del índice actual
@@ -353,6 +357,67 @@ Future<void> _callees(List<String> args) async {
       stdout.writeln('    → ${c.symbol}   ${c.file}:${c.callLine}');
     }
     stdout.writeln();
+  }
+}
+
+Future<void> _flow(List<String> args) async {
+  final positional = args.where((a) => !a.startsWith('--')).toList();
+  if (positional.isEmpty) {
+    stderr.writeln('Falta <símbolo de entrada>');
+    exitCode = 64;
+    return;
+  }
+  final projectPath = _projectPathOrExit();
+  if (projectPath == null) return;
+  var depth = 5;
+  final di = args.indexOf('--depth');
+  if (di >= 0 && di + 1 < args.length) depth = int.tryParse(args[di + 1]) ?? 5;
+
+  final query = positional.first;
+  final store = SymbolStore.open(_dbPath);
+  final syms = store.findByName(query, limit: 6);
+  store.close();
+  if (syms.isEmpty) {
+    stdout.writeln('No se encontró "$query" en el índice.');
+    return;
+  }
+
+  // De los homónimos, elige el primero con una cadena real (no una hoja ni una
+  // interfaz abstracta), reusando una sola colección del analyzer.
+  final cal = DartCallees.forProject(projectPath);
+  final coll = AnalysisContextCollection(includedPaths: [projectPath]);
+  FlowNode? best;
+  var entry = syms.first;
+  for (final s in syms) {
+    final root = await cal.traceFlow(s.name, s.filePath,
+        maxDepth: depth, collection: coll);
+    if (root.children.isNotEmpty) {
+      best = root;
+      entry = s;
+      break;
+    }
+    best ??= root;
+  }
+
+  stdout.writeln('trace_flow desde "${entry.name}" '
+      '(${entry.filePath}, prof. máx $depth) — solo símbolos del proyecto\n');
+  _printFlow(best!, 0);
+  if (best.children.isEmpty) {
+    stdout.writeln('\n(sin callees del proyecto: es hoja o interfaz abstracta — '
+        'prueba otro símbolo de entrada)');
+  }
+}
+
+void _printFlow(FlowNode n, int level) {
+  final tag = n.repeated
+      ? '  ↩ (ya expandido)'
+      : n.truncated
+          ? '  … (truncado)'
+          : '';
+  final prefix = level == 0 ? '' : '${'    ' * (level - 1)}└─ ';
+  stdout.writeln('$prefix${n.symbol}  (${n.file}:${n.line})$tag');
+  for (final c in n.children) {
+    _printFlow(c, level + 1);
   }
 }
 
