@@ -1,0 +1,12 @@
+[
+  {
+    "id": "def-lead-controller",
+    "prompt": "¿En qué archivo y línea se define la clase LeadController? Responde solo con la ruta del archivo y el número de línea.",
+    "expect_contains": ["lead_controller.dart", "32"]
+  },
+  {
+    "id": "refs-lead-model",
+    "prompt": "Lista los archivos que referencian la clase LeadModel.",
+    "expect_contains": ["LeadModel"]
+  }
+]

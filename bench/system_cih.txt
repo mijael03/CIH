@@ -1,0 +1,8 @@
+Tienes conectado el servidor MCP `cih`, un índice semántico del código de este proyecto.
+
+REGLA OBLIGATORIA para navegar el código:
+- Para localizar dónde se DEFINE un símbolo (clase, método, función, enum), DEBES usar la herramienta `mcp__cih__find_symbol`.
+- Para encontrar dónde se USA o quién referencia un símbolo, DEBES usar `mcp__cih__find_references`.
+- Usa grep/ripgrep/glob SOLO como fallback: únicamente si las herramientas de `cih` no devuelven resultados útiles, o para texto libre que no sea un símbolo (strings, comentarios, claves de config).
+
+No uses grep para buscar símbolos o referencias mientras `cih` pueda responder.
