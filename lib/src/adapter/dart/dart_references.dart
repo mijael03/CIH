@@ -34,6 +34,7 @@ class DartReferences {
   Future<ReferenceResult> find(
     String name, {
     String? definitionFile,
+    AnalysisContextCollection? collection,
     void Function(int done, int total)? onProgress,
   }) async {
     final libDir = Directory(p.join(projectPath, 'lib'));
@@ -52,7 +53,9 @@ class DartReferences {
       }
     }
 
-    final collection = AnalysisContextCollection(includedPaths: [projectPath]);
+    // Reusa la colección "caliente" del server si se pasa; si no, crea una.
+    final acc =
+        collection ?? AnalysisContextCollection(includedPaths: [projectPath]);
 
     // 1. Localizar el elemento objetivo (preferimos su archivo de definición).
     final defAbs =
@@ -65,7 +68,7 @@ class DartReferences {
     Element? target;
     String? targetFileAbs;
     for (final f in searchOrder) {
-      final unit = await collection.contextFor(f).currentSession
+      final unit = await acc.contextFor(f).currentSession
           .getResolvedUnit(f);
       if (unit is! ResolvedUnitResult) continue;
       final finder = _DeclFinder(name);
@@ -84,7 +87,7 @@ class DartReferences {
     final seen = <String>{};
     var done = 0;
     for (final f in candidates) {
-      final unit = await collection.contextFor(f).currentSession
+      final unit = await acc.contextFor(f).currentSession
           .getResolvedUnit(f);
       done++;
       onProgress?.call(done, candidates.length);

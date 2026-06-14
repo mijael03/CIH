@@ -28,6 +28,34 @@ El resultado: **menos tokens, menos iteraciones y respuestas más precisas.**
 
 Se integra vía **MCP**, así cualquier agente compatible lo consulta como una herramienta más.
 
+## Uso
+
+```bash
+# 1. Indexar un proyecto Dart/Flutter
+dart run bin/cih.dart index /ruta/al/proyecto
+
+# 2. Consultar desde la CLI
+dart run bin/cih.dart find  LeadController   # ¿dónde se define?
+dart run bin/cih.dart refs  LeadModel        # ¿dónde se usa? (semántico)
+
+# 3. O exponerlo como servidor MCP para tu agente
+dart run bin/cih_mcp.dart
+```
+
+Para conectarlo a **Claude Code**, agrega a `.mcp.json` (con `cwd` apuntando a este repo, donde vive el índice):
+
+```json
+{
+  "mcpServers": {
+    "cih": {
+      "command": "dart",
+      "args": ["run", "bin/cih_mcp.dart"],
+      "cwd": "/ruta/a/CIH"
+    }
+  }
+}
+```
+
 ## Estado
 
 🚧 Desarrollo temprano. Lenguaje soportado: **Dart / Flutter**. Multi-lenguaje en el horizonte.
