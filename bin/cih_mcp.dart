@@ -48,9 +48,8 @@ Future<void> main() async {
   server.registerTool(
     'find_symbol',
     description:
-        'Encuentra dónde se define un símbolo (clase, método, función, campo, '
-        'enum) por nombre. Devuelve tipo, firma y ubicación file:line, sin el '
-        'cuerpo. Úsalo en vez de grep para localizar definiciones.',
+        'Localiza la definición de un símbolo (clase/método/función/campo/enum) '
+        'por nombre: tipo, firma y file:line, sin el cuerpo.',
     inputSchema: JsonSchema.object(
       properties: {
         'name': JsonSchema.string(description: 'Nombre del símbolo a buscar.'),
@@ -85,9 +84,9 @@ Future<void> main() async {
   server.registerTool(
     'find_references',
     description:
-        'Encuentra TODOS los usos reales de un símbolo por resolución semántica '
-        '(no texto): cero falsos positivos, a diferencia de grep. Devuelve las '
-        'referencias agrupadas por archivo con sus líneas.',
+        'Usos reales de un símbolo por resolución semántica (cero falsos '
+        'positivos vs grep). Agrupa por declaración (separa homónimos por '
+        'receptor) con archivo y líneas.',
     inputSchema: JsonSchema.object(
       properties: {
         'name': JsonSchema.string(description: 'Nombre del símbolo.'),

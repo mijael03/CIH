@@ -7,7 +7,12 @@ import 'dart:io';
 /// tokens, turnos, tiempo, costo y acierto — el comportamiento REAL del agente
 /// resolviendo cada tarea (no un proxy de una sola consulta).
 ///
-///   dart run tool/bench_e2e.dart
+///   dart run tool/bench_e2e.dart [--model X] [--reps N] [--first N] [--skip N]
+///
+/// Ejemplos (ejecución por etapas para controlar costo):
+///   dart run tool/bench_e2e.dart --first 5            # primeras 5 preguntas
+///   dart run tool/bench_e2e.dart --skip 5             # las restantes
+///   dart run tool/bench_e2e.dart --reps 1 --first 1   # smoke rápido y barato
 ///
 /// Condiciones:
 ///   - baseline : SIN cih. Solo grep/herramientas nativas (comportamiento normal).
@@ -22,41 +27,56 @@ import 'dart:io';
 
 // ── Configuración ──────────────────────────────────────────────────────────
 const _projectUnderTest = '/Users/mijaelcama/Documents/trabajo/navia/zefiron';
-const _repetitions = 3; // corridas por (pregunta × condición) → promediar ruido
-const _model = ''; // vacío = modelo por defecto; fija uno para reproducibilidad
-const _permissionMode = 'bypassPermissions'; // headless read-only; ver bench/README.md
+const _permissionMode = 'bypassPermissions'; // headless read-only; ver README
+const _defaultModel = 'haiku'; // modelo barato por defecto; override con --model
+const _defaultReps = 3; // corridas por (pregunta × condición) → promedia ruido
 
-Future<void> main() async {
+Future<void> main(List<String> argv) async {
+  final opts = _parseArgs(argv);
   final root = Directory.current.path;
   final qFile = File('$root/bench/questions.json');
   if (!qFile.existsSync()) {
-    stderr.writeln('Falta bench/questions.json — copia bench/questions.example.json '
-        'y complétalo con tus preguntas.');
+    stderr.writeln('Falta bench/questions.json — copia '
+        'bench/questions.example.json y complétalo con tus preguntas.');
     exit(64);
   }
-  final questions = (json.decode(qFile.readAsStringSync()) as List)
+  var questions = (json.decode(qFile.readAsStringSync()) as List)
       .map((e) => Question.fromJson(e as Map<String, dynamic>))
       .toList();
-  final systemCih = File('$root/bench/system_cih.txt').readAsStringSync().trim();
+  if (opts.skip > 0) questions = questions.skip(opts.skip).toList();
+  if (opts.first != null) questions = questions.take(opts.first!).toList();
+  if (questions.isEmpty) {
+    stderr.writeln('No quedaron preguntas tras aplicar --first/--skip.');
+    exit(64);
+  }
+
+  final systemCih =
+      File('$root/bench/system_cih.txt').readAsStringSync().trim();
   final cihConfig = '$root/bench/mcp/cih.json';
   final noneConfig = '$root/bench/mcp/none.json';
+
+  stdout.writeln('modelo: ${opts.model} · repeticiones: ${opts.reps} · '
+      'preguntas: ${questions.length}\n');
 
   final ts = DateTime.now().millisecondsSinceEpoch;
   final outDir = Directory('$root/bench/results')..createSync(recursive: true);
   final jsonl = File('${outDir.path}/run-$ts.jsonl').openWrite();
 
   const conditions = ['baseline', 'cih'];
-  final total = questions.length * conditions.length * _repetitions;
+  final total = questions.length * conditions.length * opts.reps;
   final all = <Metrics>[];
   var n = 0;
 
   for (final q in questions) {
     for (final cond in conditions) {
-      for (var rep = 1; rep <= _repetitions; rep++) {
+      for (var rep = 1; rep <= opts.reps; rep++) {
         n++;
         stdout.writeln('[$n/$total] ${q.id} · $cond · rep $rep ...');
         final m = await _run(q, cond, rep,
-            systemCih: systemCih, cihConfig: cihConfig, noneConfig: noneConfig);
+            model: opts.model,
+            systemCih: systemCih,
+            cihConfig: cihConfig,
+            noneConfig: noneConfig);
         all.add(m);
         jsonl.writeln(json.encode(m.toJson()));
         await jsonl.flush();
@@ -79,6 +99,7 @@ Future<Metrics> _run(
   Question q,
   String cond,
   int rep, {
+  required String model,
   required String systemCih,
   required String cihConfig,
   required String noneConfig,
@@ -88,7 +109,7 @@ Future<Metrics> _run(
     '--output-format', 'json',
     '--permission-mode', _permissionMode,
     '--strict-mcp-config',
-    if (_model.isNotEmpty) ...['--model', _model],
+    if (model.isNotEmpty) ...['--model', model],
     if (cond == 'cih') ...[
       '--mcp-config', cihConfig,
       '--append-system-prompt', systemCih,
@@ -135,9 +156,9 @@ Future<Metrics> _run(
 
 String _renderSummary(List<Metrics> all, List<String> conditions) {
   final b = StringBuffer('# Resultados benchmark E2E\n\n');
-  b.writeln('Promedios por condición '
-      '($_repetitions repeticiones × ${all.length ~/ (conditions.length * _repetitions)} preguntas):\n');
-  b.writeln('| Condición | n | acierto | tokens_in | tokens_out | total | turnos | tiempo | costo |');
+  b.writeln('Promedios por condición (${all.length} corridas):\n');
+  b.writeln('| Condición | n | acierto | tokens_in | tokens_out | total '
+      '| turnos | tiempo | costo |');
   b.writeln('|---|---|---|---|---|---|---|---|---|');
 
   final byCond = <String, List<Metrics>>{};
@@ -168,8 +189,8 @@ String _renderSummary(List<Metrics> all, List<String> conditions) {
         'contexto total ${ratio((m) => m.totalTokens).toStringAsFixed(1)}× · '
         'turnos ${ratio((m) => m.numTurns).toStringAsFixed(1)}× · '
         'costo ${ratio((m) => m.costUsd).toStringAsFixed(1)}×');
-    b.writeln('\nAcierto: baseline '
-        '${(_acc(bl)).toStringAsFixed(0)}% vs CIH ${(_acc(ci)).toStringAsFixed(0)}%');
+    b.writeln('\nAcierto: baseline ${_acc(bl).toStringAsFixed(0)}% '
+        'vs CIH ${_acc(ci).toStringAsFixed(0)}%');
   }
   return b.toString();
 }
@@ -179,6 +200,41 @@ double _avg(List<Metrics> l, num Function(Metrics) f) =>
 
 double _acc(List<Metrics> l) =>
     l.isEmpty ? 0 : l.where((m) => m.correct).length / l.length * 100;
+
+class _Opts {
+  _Opts({
+    required this.model,
+    required this.reps,
+    required this.first,
+    required this.skip,
+  });
+  final String model;
+  final int reps;
+  final int? first;
+  final int skip;
+}
+
+_Opts _parseArgs(List<String> argv) {
+  var model = _defaultModel;
+  var reps = _defaultReps;
+  int? first;
+  var skip = 0;
+  for (var i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--model':
+        model = argv[++i];
+      case '--reps':
+        reps = int.parse(argv[++i]);
+      case '--first':
+        first = int.parse(argv[++i]);
+      case '--skip':
+        skip = int.parse(argv[++i]);
+      default:
+        stderr.writeln('Flag desconocido: ${argv[i]}');
+    }
+  }
+  return _Opts(model: model, reps: reps, first: first, skip: skip);
+}
 
 class Question {
   Question(this.id, this.prompt, this.expectContains);

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "p1-def-pagination-dto",
+    "prompt": "¿En qué archivo se define la clase PaginationDTO? Responde con la ruta del archivo.",
+    "expect_contains": ["pagination_dto"]
+  },
+  {
+    "id": "p2-def-model-base",
+    "prompt": "¿En qué archivo se define la clase base Model (la clase de la que heredan los modelos del proyecto, no un campo llamado model)? Responde con la ruta.",
+    "expect_contains": ["domain/models/model"]
+  },
+  {
+    "id": "p3-def-domain-class",
+    "prompt": "¿Dónde se define la clase utilitaria Domain (la de construcción de URLs), no el campo domain ni domainColor? Responde con la ruta del archivo.",
+    "expect_contains": ["services/domain"]
+  },
+  {
+    "id": "p4-tryparse-pagination",
+    "prompt": "¿En qué archivo y línea está el método tryParse que pertenece a PaginationDTO (no los tryParse de los enums ni de otros DTOs)?",
+    "expect_contains": ["pagination_dto", "55"]
+  },
+  {
+    "id": "p5-familia-makedto",
+    "prompt": "¿Cuántos métodos de la familia makeDTO* (makeDTO, makeDTOList, makeDTOError, etc.) existen y en qué archivo están definidos?",
+    "expect_contains": ["makeDTOList", "makeDTOError"]
+  },
+  {
+    "id": "p6-refs-permissions-enum",
+    "prompt": "¿En qué archivo se define el enum Permissions y aproximadamente en cuántos archivos del proyecto se usa?",
+    "expect_contains": ["permissions"]
+  },
+  {
+    "id": "p7-refs-makedto",
+    "prompt": "¿Quiénes llaman al método makeDTO del Adapter (el método makeDTO en sí, no makeDTOList ni makeDTOError)? Indica en qué clase está definido.",
+    "expect_contains": ["adapter", "makeDTO"]
+  },
+  {
+    "id": "p8-refs-logout",
+    "prompt": "¿Desde dónde se invoca logout? Hay varios métodos logout distintos (uno en una extensión de context, otro en MainProvider, otro en UserProvider); distínguelos.",
+    "expect_contains": ["context", "main_provider"]
+  },
+  {
+    "id": "p9-refs-leadadapter",
+    "prompt": "Si renombro la clase LeadAdapter, ¿qué archivos tendría que actualizar? Lista los archivos que la referencian.",
+    "expect_contains": ["customer_controller", "lead_use_case", "process_instance_controller"]
+  },
+  {
+    "id": "p10-refs-addpermissions",
+    "prompt": "El método addPermissions existe en RoleUseCase y en RoleController. ¿Quién llama a cada uno por separado?",
+    "expect_contains": ["role_controller", "role_view_dialog"]
+  }
+]

@@ -6,6 +6,7 @@ pubspec_overrides.yaml
 
 # CIH (índice local)
 .cih/
+bench/results/
 
 # Tooling
 *.log
