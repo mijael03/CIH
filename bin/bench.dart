@@ -55,12 +55,7 @@ Future<void> main() async {
   // find_references: A = grep -rn ; B = JSON de CIH
   for (final name in refsQueries) {
     final a = await grepTokens(name);
-    final defm = store.findByName(name, limit: 1);
-    final res = await DartReferences(project).find(
-      name,
-      definitionFile: defm.isNotEmpty ? defm.first.filePath : null,
-      collection: hot,
-    );
+    final res = await DartReferences(project).find(name, collection: hot);
     final b = _tok(_refsJson(name, res));
     totalA += a;
     totalB += b;
@@ -99,18 +94,28 @@ Future<void> main() async {
 }
 
 String _refsJson(String name, ReferenceResult res) {
+  return const JsonEncoder.withIndent('  ').convert({
+    'query': name,
+    'targetCount': res.targets.length,
+    'totalReferences': res.totalReferences,
+    'targets': [for (final t in res.targets) _targetMap(t)],
+  });
+}
+
+Map<String, dynamic> _targetMap(ReferenceTarget t) {
   final byFile = <String, List<int>>{};
-  for (final r in res.references) {
+  for (final r in t.references) {
     (byFile[r.filePath] ??= <int>[]).add(r.line);
   }
   final files = byFile.keys.toList()..sort();
-  return const JsonEncoder.withIndent('  ').convert({
-    'query': name,
-    if (res.targetFile != null) 'definition': res.targetFile,
-    'total': res.references.length,
+  return {
+    'symbol': t.qualified,
+    'kind': t.kind,
+    'definition': '${t.file}:${t.line}',
+    'total': t.references.length,
     'fileCount': files.length,
     'files': [for (final f in files) {'file': f, 'lines': byFile[f]!..sort()}],
-  });
+  };
 }
 
 String _symbolJson(String name, List<CodeSymbol> syms) {

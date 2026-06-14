@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:cih/src/adapter/dart/dart_adapter.dart';
 import 'package:cih/src/adapter/dart/dart_references.dart';
-import 'package:cih/src/model/intermediate_model.dart';
 import 'package:cih/src/store/symbol_store.dart';
 
 const _dbDir = '.cih';
@@ -128,22 +127,18 @@ Future<void> _refs(List<String> args) async {
 
   final store = SymbolStore.open(_dbPath);
   final projectPath = store.getMeta('project_path');
+  store.close();
   if (projectPath == null) {
     stderr.writeln('El índice no registró la ruta del proyecto. '
         'Re-indexa:  cih index <ruta>');
-    store.close();
     exitCode = 69;
     return;
   }
-  final defMatches = store.findByName(query, limit: 1);
-  final defFile = defMatches.isNotEmpty ? defMatches.first.filePath : null;
-  store.close();
 
   stdout.writeln('Buscando referencias a "$query" ...');
   final sw = Stopwatch()..start();
   final result = await DartReferences(projectPath).find(
     query,
-    definitionFile: defFile,
     onProgress: (done, total) {
       if (done % 20 == 0 || done == total) {
         stdout.write('\r  resolviendo $done/$total candidatos ');
@@ -153,26 +148,28 @@ Future<void> _refs(List<String> args) async {
   sw.stop();
   stdout.writeln();
 
-  if (result.targetFile == null) {
+  if (!result.found) {
     stdout.writeln('No se encontró la definición de "$query".');
     return;
   }
 
-  final byFile = <String, List<Occurrence>>{};
-  for (final r in result.references) {
-    byFile.putIfAbsent(r.filePath, () => []).add(r);
-  }
-
   final secs = (sw.elapsedMilliseconds / 1000).toStringAsFixed(2);
-  stdout.writeln('${result.references.length} referencia(s) en '
-      '${byFile.length} archivo(s)  (${secs}s)  ·  def: ${result.targetFile}\n');
+  stdout.writeln('${result.targets.length} símbolo(s) "$query" · '
+      '${result.totalReferences} referencia(s)  (${secs}s)\n');
 
-  final files = byFile.keys.toList()..sort();
-  for (final f in files) {
-    final occs = byFile[f]!..sort((a, b) => a.line.compareTo(b.line));
-    final lines = occs.map((o) => o.line).join(', ');
-    stdout.writeln('  $f');
-    stdout.writeln('      líneas: $lines');
+  for (final t in result.targets) {
+    final byFile = <String, List<int>>{};
+    for (final r in t.references) {
+      (byFile[r.filePath] ??= <int>[]).add(r.line);
+    }
+    stdout.writeln('▸ ${t.qualified}  [${t.kind}]  def ${t.file}:${t.line}'
+        '  ·  ${t.references.length} ref en ${byFile.length} archivo(s)');
+    final files = byFile.keys.toList()..sort();
+    for (final f in files) {
+      final lines = (byFile[f]!..sort()).join(', ');
+      stdout.writeln('    $f  →  $lines');
+    }
+    stdout.writeln();
   }
 }
 

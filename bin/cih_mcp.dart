@@ -96,26 +96,13 @@ Future<void> main() async {
     ),
     callback: (args, extra) async {
       final name = args['name'] as String;
-      final defMatches = store.findByName(name, limit: 1);
-      final defFile = defMatches.isNotEmpty ? defMatches.first.filePath : null;
-      final result = await DartReferences(projectPath).find(
-        name,
-        definitionFile: defFile,
-        collection: hot(),
-      );
-      final byFile = <String, List<int>>{};
-      for (final r in result.references) {
-        (byFile[r.filePath] ??= <int>[]).add(r.line);
-      }
-      final files = byFile.keys.toList()..sort();
+      final result =
+          await DartReferences(projectPath).find(name, collection: hot());
       final payload = {
         'query': name,
-        if (result.targetFile != null) 'definition': result.targetFile,
-        'total': result.references.length,
-        'fileCount': files.length,
-        'files': [
-          for (final f in files) {'file': f, 'lines': byFile[f]!..sort()},
-        ],
+        'targetCount': result.targets.length,
+        'totalReferences': result.totalReferences,
+        'targets': [for (final t in result.targets) _targetToJson(t)],
       };
       return CallToolResult.fromContent(
         [TextContent(text: const JsonEncoder.withIndent('  ').convert(payload))],
@@ -124,4 +111,22 @@ Future<void> main() async {
   );
 
   server.connect(StdioServerTransport());
+}
+
+Map<String, dynamic> _targetToJson(ReferenceTarget t) {
+  final byFile = <String, List<int>>{};
+  for (final r in t.references) {
+    (byFile[r.filePath] ??= <int>[]).add(r.line);
+  }
+  final files = byFile.keys.toList()..sort();
+  return {
+    'symbol': t.qualified,
+    'kind': t.kind,
+    'definition': '${t.file}:${t.line}',
+    'total': t.references.length,
+    'fileCount': files.length,
+    'files': [
+      for (final f in files) {'file': f, 'lines': byFile[f]!..sort()},
+    ],
+  };
 }

@@ -10,22 +10,50 @@ import 'package:path/path.dart' as p;
 
 import '../../model/intermediate_model.dart';
 
-/// Resultado de buscar referencias a un símbolo.
+/// Una declaración objetivo (un símbolo concreto) con sus referencias.
+///
+/// Cuando hay homónimos (p. ej. dos `addPermissions` en clases distintas), cada
+/// uno es un target separado → así se resuelve "quién llama a cada cual" por su
+/// receptor, algo que grep no puede hacer.
+class ReferenceTarget {
+  ReferenceTarget({
+    required this.name,
+    required this.kind,
+    required this.container,
+    required this.file,
+    required this.line,
+  });
+
+  final String name;
+  final String kind; // class_, enum_, mixin_, method, getter, setter, field...
+  final String? container; // clase/mixin/extension contenedora, si aplica
+  final String file; // ruta relativa de la definición
+  final int line;
+  final List<Occurrence> references = [];
+  final Set<String> _seen = {};
+
+  /// Nombre cualificado legible: `Container.name` o `name`.
+  String get qualified => container == null ? name : '$container.$name';
+}
+
+/// Resultado de buscar referencias: una entrada por cada declaración homónima.
 class ReferenceResult {
-  ReferenceResult(this.targetName, this.targetFile, this.references);
+  ReferenceResult(this.queryName, this.targets);
 
-  final String targetName;
+  final String queryName;
+  final List<ReferenceTarget> targets;
 
-  /// Archivo (relativo) donde se localizó la definición del objetivo.
-  final String? targetFile;
-  final List<Occurrence> references;
+  bool get found => targets.isNotEmpty;
+  int get totalReferences =>
+      targets.fold(0, (acc, t) => acc + t.references.length);
 }
 
 /// Motor de referencias para Dart, basado en **resolución semántica**.
 ///
-/// En vez de resolver el proyecto completo, hace un híbrido: pre-filtra por
-/// texto los archivos candidatos (barato), los resuelve y compara *elementos*
-/// (no texto). Resultado: cero falsos positivos, a diferencia de grep.
+/// Pre-filtra candidatos por texto (barato), resuelve y compara *elementos* (no
+/// texto) → cero falsos positivos. Resuelve tanto tipos (clases/enums) como
+/// miembros (métodos/getters/setters/campos), y agrupa por declaración para
+/// distinguir homónimos por su receptor.
 class DartReferences {
   DartReferences(this.projectPath);
 
@@ -33,12 +61,11 @@ class DartReferences {
 
   Future<ReferenceResult> find(
     String name, {
-    String? definitionFile,
     AnalysisContextCollection? collection,
     void Function(int done, int total)? onProgress,
   }) async {
     final libDir = Directory(p.join(projectPath, 'lib'));
-    if (!libDir.existsSync()) return ReferenceResult(name, null, const []);
+    if (!libDir.existsSync()) return ReferenceResult(name, const []);
 
     // Pre-filtro textual: solo archivos que mencionan el nombre.
     final candidates = <String>[];
@@ -53,127 +80,149 @@ class DartReferences {
       }
     }
 
-    // Reusa la colección "caliente" del server si se pasa; si no, crea una.
     final acc =
         collection ?? AnalysisContextCollection(includedPaths: [projectPath]);
 
-    // 1. Localizar el elemento objetivo (preferimos su archivo de definición).
-    final defAbs =
-        definitionFile != null ? p.join(projectPath, definitionFile) : null;
-    final searchOrder = <String>[
-      if (defAbs != null && File(defAbs).existsSync()) defAbs,
-      ...candidates,
-    ];
-
-    Element? target;
-    String? targetFileAbs;
-    for (final f in searchOrder) {
-      final unit = await acc.contextFor(f).currentSession
-          .getResolvedUnit(f);
+    // Fase 1: recolectar TODAS las declaraciones con ese nombre (los targets).
+    final targets = <Element, ReferenceTarget>{};
+    for (final f in candidates) {
+      final unit = await acc.contextFor(f).currentSession.getResolvedUnit(f);
       if (unit is! ResolvedUnitResult) continue;
-      final finder = _DeclFinder(name);
-      unit.unit.accept(finder);
-      if (finder.target != null) {
-        target = finder.target;
-        targetFileAbs = f;
-        break;
-      }
+      final rel = p.relative(f, from: projectPath);
+      unit.unit.accept(_DeclCollector(name, rel, unit.lineInfo, targets));
     }
+    if (targets.isEmpty) return ReferenceResult(name, const []);
 
-    if (target == null) return ReferenceResult(name, null, const []);
-
-    // 2. Recorrer candidatos y comparar elementos resueltos.
-    final refs = <Occurrence>[];
-    final seen = <String>{};
+    // Fase 2: recolectar referencias (la resolución ya quedó cacheada).
     var done = 0;
     for (final f in candidates) {
-      final unit = await acc.contextFor(f).currentSession
-          .getResolvedUnit(f);
+      final unit = await acc.contextFor(f).currentSession.getResolvedUnit(f);
       done++;
       onProgress?.call(done, candidates.length);
       if (unit is! ResolvedUnitResult) continue;
       final rel = p.relative(f, from: projectPath);
-      unit.unit.accept(_RefVisitor(target, name, rel, unit.lineInfo, refs, seen));
+      unit.unit.accept(_RefCollector(targets, rel, unit.lineInfo));
     }
 
-    final targetRel = targetFileAbs == null
-        ? null
-        : p.relative(targetFileAbs, from: projectPath);
-    return ReferenceResult(name, targetRel, refs);
+    return ReferenceResult(name, targets.values.toList());
   }
 }
 
-/// Encuentra la declaración con el nombre dado y captura su [Element].
-class _DeclFinder extends RecursiveAstVisitor<void> {
-  _DeclFinder(this.name);
+/// Recolecta cada declaración cuyo nombre coincide, junto con su [Element].
+class _DeclCollector extends RecursiveAstVisitor<void> {
+  _DeclCollector(this.name, this.filePath, this.lineInfo, this.targets);
 
   final String name;
-  Element? target;
+  final String filePath;
+  final LineInfo lineInfo;
+  final Map<Element, ReferenceTarget> targets;
+  final List<String> _stack = [];
 
-  void _check(String? declName, Fragment? fragment) {
-    if (target == null && declName == name && fragment != null) {
-      target = fragment.element;
-    }
+  String? get _container => _stack.isEmpty ? null : _stack.last;
+
+  void _maybe(String declName, String kind, Fragment? fragment, int offset) {
+    if (declName != name || fragment == null) return;
+    // baseElement normaliza miembros de tipos genéricos a su declaración.
+    final el = fragment.element.baseElement;
+    targets.putIfAbsent(el, () {
+      final loc = lineInfo.getLocation(offset);
+      return ReferenceTarget(
+        name: name,
+        kind: kind,
+        container: _container,
+        file: filePath,
+        line: loc.lineNumber,
+      );
+    });
   }
 
   @override
   void visitClassDeclaration(ClassDeclaration node) {
-    _check(node.namePart.typeName.lexeme, node.declaredFragment);
+    final n = node.namePart.typeName.lexeme;
+    _maybe(n, 'class_', node.declaredFragment, node.namePart.typeName.offset);
+    _stack.add(n);
     super.visitClassDeclaration(node);
+    _stack.removeLast();
   }
 
   @override
   void visitEnumDeclaration(EnumDeclaration node) {
-    _check(node.namePart.typeName.lexeme, node.declaredFragment);
+    final n = node.namePart.typeName.lexeme;
+    _maybe(n, 'enum_', node.declaredFragment, node.namePart.typeName.offset);
+    _stack.add(n);
     super.visitEnumDeclaration(node);
+    _stack.removeLast();
   }
 
   @override
   void visitMixinDeclaration(MixinDeclaration node) {
-    _check(node.name.lexeme, node.declaredFragment);
+    _maybe(node.name.lexeme, 'mixin_', node.declaredFragment, node.name.offset);
+    _stack.add(node.name.lexeme);
     super.visitMixinDeclaration(node);
+    _stack.removeLast();
   }
 
   @override
   void visitExtensionDeclaration(ExtensionDeclaration node) {
-    _check(node.name?.lexeme, node.declaredFragment);
+    final n = node.name?.lexeme;
+    if (n != null) {
+      _maybe(n, 'extension_', node.declaredFragment, node.name!.offset);
+    }
+    _stack.add(n ?? '<extension>');
     super.visitExtensionDeclaration(node);
+    _stack.removeLast();
+  }
+
+  @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    final kind = node.isGetter
+        ? 'getter'
+        : node.isSetter
+            ? 'setter'
+            : 'method';
+    _maybe(node.name.lexeme, kind, node.declaredFragment, node.name.offset);
+    super.visitMethodDeclaration(node);
   }
 
   @override
   void visitFunctionDeclaration(FunctionDeclaration node) {
     if (node.parent is CompilationUnit) {
-      _check(node.name.lexeme, node.declaredFragment);
+      final kind = node.isGetter
+          ? 'getter'
+          : node.isSetter
+              ? 'setter'
+              : 'function';
+      _maybe(node.name.lexeme, kind, node.declaredFragment, node.name.offset);
     }
     super.visitFunctionDeclaration(node);
   }
+
+  @override
+  void visitFieldDeclaration(FieldDeclaration node) {
+    for (final v in node.fields.variables) {
+      _maybe(v.name.lexeme, 'field', v.declaredFragment, v.name.offset);
+    }
+    super.visitFieldDeclaration(node);
+  }
 }
 
-/// Recorre un archivo resuelto y registra cada referencia al [target].
-class _RefVisitor extends RecursiveAstVisitor<void> {
-  _RefVisitor(
-    this.target,
-    this.targetName,
-    this.filePath,
-    this.lineInfo,
-    this.out,
-    this.seen,
-  );
+/// Recorre un archivo resuelto y registra cada referencia a algún target.
+class _RefCollector extends RecursiveAstVisitor<void> {
+  _RefCollector(this.targets, this.filePath, this.lineInfo);
 
-  final Element target;
-  final String targetName;
+  final Map<Element, ReferenceTarget> targets;
   final String filePath;
   final LineInfo lineInfo;
-  final List<Occurrence> out;
-  final Set<String> seen;
 
   void _hit(Element? element, int offset) {
-    if (element == null || element != target) return;
+    if (element == null) return;
+    final t = targets[element.baseElement];
+    if (t == null) return;
     final loc = lineInfo.getLocation(offset);
     final key = '$filePath:${loc.lineNumber}:${loc.columnNumber}';
-    if (seen.add(key)) {
-      out.add(Occurrence(
-        symbolId: targetName,
+    if (t._seen.add(key)) {
+      t.references.add(Occurrence(
+        symbolId: t.qualified,
         filePath: filePath,
         line: loc.lineNumber,
         column: loc.columnNumber,
